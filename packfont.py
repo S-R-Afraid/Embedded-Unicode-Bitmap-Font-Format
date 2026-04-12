@@ -8,15 +8,10 @@ import tempfile
 import shutil
 import uuid
 import re
-# ===========================================
-#将要打包的字体放在同目录下的needfont文件夹里，然后运行打包脚本即可。
-#您还可以传入 -whitelist 参数来读取whitelist.txt里的字符来按需生成。
-#生成的字库放在同目录下的asset/font/<fontname>/里。
-#生成完毕后，可运行检查脚本来检查字库是否正确。
+import hashlib
 
-#由于读取文件时不分大小，目前这个脚本会把同一个字库生成两遍，算是一个bug，但是不影响使用。
 # ================= 全局配置 =================
-TARGET_SIZES = [12, 16, 19, 25, 32]
+TARGET_SIZES = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 40]
 BPP = 4
 HEADER_SIZE = 146  # 严格匹配 C 语言 #pragma pack(1)
 
@@ -149,9 +144,16 @@ def main():
             shutil.copy2(ttf_path, temp_ttf)
             face = freetype.Face(temp_ttf)
 
-            # 提取名称，防止 Windows 路径非法字符
-            raw_name = face.family_name.decode('utf-8', errors='ignore') if face.family_name else ""
-            font_name = re.sub(r'[\\/*?:"<>|]', '', raw_name).strip() or "font"
+            # 1. 提取不带扩展名的文件名。切记保留结尾的，且千万不能有逗号
+            base_filename = os.path.splitext(os.path.basename(ttf_path))[0]
+
+            # 2. 正则过滤：严格保留英文字母、数字、下划线、短横线以及中文（避免 FatFs 无法读取特殊符号）
+            font_name = re.sub(r'[^a-zA-Z0-9_\-\u4e00-\u9fa5]', '', base_filename).strip()
+
+            # 3. 兜底策略：如果过滤后名字空了（例如全是日文或颜文字），则取原文件名的 MD5 前 6 位
+            if not font_name:
+                font_name = hashlib.md5(base_filename.encode('utf-8')).hexdigest()[:6]
+
             output_dir = os.path.join("asset", "font", font_name)
             os.makedirs(output_dir, exist_ok=True)
 
@@ -164,7 +166,7 @@ def main():
             else:
                 charcode, gindex = face.get_first_char()
                 while gindex:
-                    valid_chars.append(charcode);
+                    valid_chars.append(charcode)
                     charcode, gindex = face.get_next_char(charcode, gindex)
 
             valid_chars = sorted(list(set(valid_chars)))
@@ -174,7 +176,8 @@ def main():
 
             del face  # 必须先释放句柄才能删除临时文件
         except Exception as e:
-            print(f"失败 {ttf_path}: {e}")
+            # 增加报错详情的打印，不仅打印错误信息，还打印错误类型，方便排查
+            print(f"失败 {ttf_path} - 错误类型: {type(e).__name__}, 详情: {e}")
         finally:
             if os.path.exists(temp_ttf): os.remove(temp_ttf)
 
